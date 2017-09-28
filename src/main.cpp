@@ -3,9 +3,13 @@
 #include "json.hpp"
 #include "PID.h"
 #include <math.h>
+#include "Eigen/Dense"
 
 // for convenience
 using json = nlohmann::json;
+using Eigen::MatrixXd;
+using Eigen::VectorXd;
+using std::vector;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -32,9 +36,22 @@ double cte_last = 0;
 bool cte_set = false;
 double cte_dt = 0;
 double cte_sig = 0;
+long code_runs = 0;
+long double rmse = 0; // not actually rmse, just an error
+long double last_rmse = 0;
+long double p_rmse = 0;
+long double i_rmse = 0;
+long double d_rmse = 0;
+int pid_count  = 0;
+int run_count = 0;
+VectorXd pid_adjust = VectorXd(3);
+
+
+
 
 int main()
 {
+
   uWS::Hub h;
 
   PID pid;
@@ -43,7 +60,8 @@ int main()
 
 	pid.Kp = 0.125;
 	pid.Ki = 0.00015;
-	pid.Kd = 2.50;
+	pid.Kd = 2.750;
+	pid_adjust << .05,.00001,.05;
 
   h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -87,6 +105,92 @@ int main()
           msgJson["throttle"] = 0.3;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
+					code_runs++;
+
+					rmse +=  cte*cte;
+
+					if (code_runs++ > 5600){
+						// P
+						if (pid_count == 0) {
+							if (run_count == 0) {
+								pid.Kp += pid_adjust[0];
+								run_count++;
+								last_rmse = rmse;
+							} else if (run_count == 1) {
+								if (rmse < last_rmse) {
+									pid_adjust[pid_count] *= 1.1;
+									run_count = 0;
+									pid_count += 1;
+								} else {
+									pid.Kp -= 2 * pid_adjust[pid_count];
+									run_count++;
+								}
+							} else if (run_count == 2) {
+								if (rmse < last_rmse) {
+									pid_adjust[pid_count] *= 1.1;
+								} else {
+									pid_adjust[pid_count] *= 0.9;
+								}
+								run_count = 0;
+								pid_count += 1;
+							}
+						}
+							// I
+							if (pid_count == 0) {
+								if (run_count == 0) {
+									pid.Ki += pid_adjust[0];
+									run_count++;
+									last_rmse = rmse;
+								} else if (run_count == 1) {
+									if (rmse < last_rmse) {
+										pid_adjust[pid_count] *= 1.1;
+										run_count = 0;
+										pid_count += 1;
+									} else {
+										pid.Ki -= 2 * pid_adjust[pid_count];
+										run_count++;
+									}
+								} else if (run_count == 2) {
+									if (rmse < last_rmse) {
+										pid_adjust[pid_count] *= 1.1;
+									} else {
+										pid_adjust[pid_count] *= 0.9;
+									}
+									run_count = 0;
+									pid_count += 1;
+								}
+							}
+								// D
+								if (pid_count == 2) {
+									if (run_count == 0) {
+										pid.Kd += pid_adjust[0];
+										run_count++;
+										last_rmse = rmse;
+									} else if (run_count == 1) {
+										if (rmse < last_rmse) {
+											pid_adjust[pid_count] *= 1.1;
+											run_count = 0;
+											pid_count = 0;
+										} else {
+											pid.Kd -= 2 * pid_adjust[pid_count];
+											run_count++;
+										}
+									} else if (run_count == 2) {
+										if (rmse < last_rmse) {
+											pid_adjust[pid_count] *= 1.1;
+										} else {
+											pid_adjust[pid_count] *= 0.9;
+										}
+										run_count = 0;
+										pid_count = 0;
+									}
+								}
+
+						code_runs = 0;
+						rmse = 0;
+					}
+
+					std::cout << code_runs << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
